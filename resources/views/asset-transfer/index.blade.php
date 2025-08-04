@@ -1,0 +1,26 @@
+<x-data-table :id="'assetTransferTable'"
+	:columns="[
+	    '#',
+	    'Transfer Number',
+	    'Jarvis Ticket',
+	    'Serial Number',
+	    'Unit Model',
+	    'Unit Category',
+	    'Status',
+	    'Customer',
+	    'From Holder',
+	    'To Holder',
+	    'From Company',
+	    'From Location',
+	    'To Company',
+	    'To Location',
+	    'QC Pass',
+	    'QC By',
+	    'QC Date',
+	    'Service',
+	    'Restaging',
+	    'Operational Unit',
+	    'Start date',
+	    'Finish date',
+	]">
+</x-data-table>

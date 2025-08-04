@@ -1,0 +1,28 @@
+<x-data-table :id="'stagingTable'"
+	:columns="[
+	    '#',
+	    'Serial Number',
+	    'Monitor Serial Number',
+	    'Staging Number',
+	    'SN Termination',
+	    'Holder Name',
+	    'Service Name',
+	    'Origin',
+	    'Brand',
+	    'Model',
+	    'Category',
+	    'Company Name',
+	    'Local User',
+	    'Group',
+	    'Location',
+	    'Request',
+	    'Status',
+	    'Deployed',
+	    'SLA',
+	    'Start Date',
+	    'Finish Date',
+	    'Created At',
+	    'Updated At',
+	    // 'Action',
+	]">
+</x-data-table>
