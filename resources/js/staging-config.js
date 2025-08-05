@@ -2,77 +2,118 @@ export default {
   tableId: 'stagingTable',
   stateSave: false,
   columns: [
-    { data: 'DT_RowIndex', searchable: false, orderable: false },
-    { data: 'serial_action', name: 'serial_action' },
-    { data: 'staging_monitor', name: 'staging_monitor' },
-    { data: 'staging_number', name: 'staging_number' },
-    { data: 'sn_termination', name: 'sn_termination' },
-    { data: 'holder_name', name: 'holder_name' },
-    { data: 'service_label', name: 'service_label' },
+    { data: 'ref', name: 'ref', visible: true },
+    { data: 'reffcustomer', name: 'reffcustomer', visible: true },
+    { data: 'title', name: 'title', visible: true },
     {
-      data: 'operational_name',
-      name: 'operational_name',
-    },
-    { data: 'brand', name: 'brand' },
-    { data: 'model', name: 'model' },
-    { data: 'unit_category', name: 'unit_category' },
-    { data: 'company_name', name: 'company_name' },
-    { data: 'company_code', name: 'company_code' },
-    { data: 'company_group', name: 'company_group' },
-    { data: 'company_location', name: 'company_location' },
-    { data: 'request_category_label', name: 'request_category' },
-    { data: 'status_badge', name: 'status' },
-    { data: 'deployment_state', name: 'is_deployed' },
-    { data: 'sla', name: 'sla' },
-    {
-      data: 'staging_start',
-      name: 'staging_start',
-      render: function (data) {
-        return moment(data).format('DD-MM-YYYY HH:mm');
-      },
+      data: 'caller_id_friendlyname',
+      name: 'caller_id_friendlyname',
       visible: true,
     },
     {
-      data: 'staging_finish',
-      name: 'staging_finish',
-      render: function (data) {
-        if (!data) {
-          return '';
-        }
-        return moment(data).format('DD-MM-YYYY HH:mm');
-      },
+      data: 'team_id_friendlyname',
+      name: 'team_id_friendlyname',
+      visible: true,
+    },
+    { data: 'org_id_friendlyname', name: 'org_id_friendlyname', visible: true },
+    {
+      data: 'agent_id_friendlyname',
+      name: 'agent_id_friendlyname',
       visible: true,
     },
     {
-      data: 'created_at',
-      name: 'created_at',
-      render: function (data) {
-        return moment(data).format('DD-MM-YYYY HH:mm');
-      },
+      data: 'location_id_friendlyname',
+      name: 'location_id_friendlyname',
       visible: true,
     },
     {
-      data: 'updated_at',
-      name: 'updated_at',
+      data: 'daascontact_id_friendlyname',
+      name: 'daascontact_id_friendlyname',
+      visible: true,
+    },
+    {
+      data: 'daascustomer_id_friendlyname',
+      name: 'daascustomer_id_friendlyname',
+      visible: true,
+    },
+    { data: 'status', name: 'status', visible: true },
+    { data: 'request_type', name: 'request_type', visible: true },
+    {
+      data: 'start_date',
+      name: 'start_date',
+      visible: true,
       render: function (data) {
         return moment(data).format('DD-MM-YYYY HH:mm');
       },
+    },
+    {
+      data: 'end_date',
+      name: 'end_date',
+      visible: true,
+      render: function (data) {
+        return moment(data).format('DD-MM-YYYY HH:mm');
+      },
+    },
+    {
+      data: 'last_update',
+      name: 'last_update',
+      visible: true,
+      render: function (data) {
+        return moment(data).format('DD-MM-YYYY HH:mm');
+      },
+    },
+    {
+      data: 'close_date',
+      name: 'close_date',
+      visible: true,
+      render: function (data) {
+        return moment(data).format('DD-MM-YYYY HH:mm');
+      },
+    },
+    { data: 'description', name: 'description', visible: true },
+    { data: 'urgency', name: 'urgency', visible: true },
+    { data: 'impact', name: 'impact', visible: true },
+    { data: 'priority', name: 'priority', visible: true },
+    {
+      data: 'service_id_friendlyname',
+      name: 'service_id_friendlyname',
+      visible: true,
+    },
+    {
+      data: 'servicesubcategory_id_friendlyname',
+      name: 'servicesubcategory_id_friendlyname',
       visible: true,
     },
     // { data: 'action', name: 'action', orderable: false, searchable: false },
   ],
   filterFields: [
-    'serial',
-    'brand',
-    'model',
-    'unit_status',
-    'service_code',
+    'ref',
+    'reffcustomer',
+    'caller_id_friendlyname',
+    'team_id_friendlyname',
+    'org_id_friendlyname',
+    'agent_id_friendlyname',
+    'location_id_friendlyname',
+    'daascontact_id_friendlyname',
+    'daascustomer_id_friendlyname',
     'status',
-    'is_deployed',
+    'request_type',
+    'start_date',
+    'end_date',
+    'last_update',
+    'close_date',
+    'description',
+    'title',
+    'urgency',
+    'impact',
+    'priority',
+    'service_id_friendlyname',
+    'servicesubcategory_id_friendlyname',
+    'impacted_ci_friendlyname',
   ],
   formId: 'filter-form',
   resetButtonId: 'reset-filter',
   liveSearch: false,
   pageLength: 100,
-  order: [20, 'asc'],
+  order: [12, 'asc'],
 };
