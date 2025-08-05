@@ -27,6 +27,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
@@ -85,186 +86,312 @@ class StagingController extends Controller
         }
     }
 
+    public function apiRequest($request, $pagination = false)
+    {
+        $jsonData = $this->configurePayload($request, $pagination);
+
+        // Kirim request ke iTop (REST/JSON)
+        $response = Http::asForm()->post(config('app.itop.url'), [
+            'auth_user' => config('app.itop.user'),
+            'auth_pwd'  => config('app.itop.password'),
+            'json_data' => json_encode($jsonData),
+        ]);
+        return $response->json();
+    }
+
+    public function configurePayload($request, $pagination)
+    {
+        // Ambil parameter DataTables
+        $start  = $request->input('start', 0);
+        $length = $request->input('length');
+
+        if ($pagination) {
+            // Jika tidak ada pagination, gunakan default 10
+            $length = $length ?: 10;
+        } else {
+            // Jika tidak ada pagination, set length ke -1 untuk mengambil semua data
+            $length = -1;
+        }
+
+        // Paginasi: hitung page dan limit
+        $page  = floor($start / $length) + 1;
+        $limit = $length;
+
+        // Bangun WHERE OQL dari parameter request
+        $where = $this->buildOqlWhere($request);
+
+        return [
+            'operation'     => 'core/get',
+            'class'         => 'UserRequest',
+            'key'           => "SELECT UserRequest{$where}",
+            // 'key'           => "SELECT UserRequest{$where} AND servicesubcategory_id_friendlyname LIKE \'%Fulfillment Staging\'",
+            'output_fields' => 'id, ref, reffcustomer, caller_id_friendlyname, team_id_friendlyname, org_id_friendlyname, agent_id_friendlyname, daascontact_id_friendlyname, location_id_friendlyname, daascustomer_id_friendlyname, status, request_type, start_date, end_date, last_update, close_date, description, title, urgency, impact, priority, service_id_friendlyname, servicesubcategory_id_friendlyname, impacted_ci_friendlyname',
+            'limit'         => (string)$limit,
+            'page'          => (string)$page,
+        ];
+    }
+
+    public function proceedData($result)
+    {
+        // Proses hasil menjadi format DataTables
+        $objects = $result['objects'] ?? [];
+        $data = [];
+        foreach ($objects as $obj) {
+            $data[] = $obj['fields'];
+        }
+        return $data;
+    }
+
     public function getData(Request $request)
     {
-        $stagings = $this->getStagingQuery();
+        $draw   = $request->input('draw');
 
-        return DataTables::of($stagings)
-            ->addColumn('company_code', function ($data) {
-                $companyCode = $data->company->company_code;
+        $result = $this->apiRequest($request, true);
 
-                return $companyCode ?? '';
-            })
-            ->addColumn('company_group', function ($data) {
-                $companyGroup = $data->company->company_group;
+        $data = $this->proceedData($result);
 
-                return $companyGroup ?? '';
-            })
-            ->addColumn('company_name', function ($data) {
-                $companyName = $data->company->company_name;
+        // get number from "message": "Found: number",
+        $count = $result['message'] ? (int)filter_var($result['message'], FILTER_SANITIZE_NUMBER_INT) : 0;
 
-                return $companyName ?? '';
-            })
-            ->addColumn('operational_name', function ($data) {
-                $operationalUnitName = $data->operationalUnit->company_name;
+        Log::info("DataTables response: " . json_encode($data, JSON_PRETTY_PRINT));
 
-                return $operationalUnitName ?? '';
-            })
-            ->addColumn('sn_termination', function ($data) {
-                return  $data->terminated_serial ?? null;
-            })
-            ->addColumn('termination', function ($data) {
-                return  $data->termination ?? null;
-            })
-            ->addColumn('company_location', function ($data) {
-                $location = $data->companyAddress->location;
-
-                return $location ?? '';
-            })
-            ->addColumn('operational_location', function ($data) {
-                $location = $data->operationalAddress->location;
-
-                return $location ?? '';
-            })
-            ->addColumn('deployment_state', function ($data) {
-                if ($data->is_deployed == 1) {
-                    return 'Deployed';
-                }
-            })
-            ->addColumn('serial_action', function ($data) {
-                $id = $data->id;
-                $label = $data->unit_serial;
-
-                return view('components.action', [
-                    'url' => route('staging.edit', $id),
-                    'label' => $label,
-                    'modal' => true,
-                    'modalName' => 'createModal',
-                ]);
-            })
-            ->addColumn('action', function ($data) {
-                $id = $data->id;
-                $actions = [
-                    'edit' => [
-                        'url' => route('staging.edit', $id),
-                        'label' => 'Update',
-                        'modal' => true,
-                        'modalName' => 'createModal',
-                    ],
-                    'destroy' => [
-                        'url' => route('staging.destroy', $id),
-                        'label' => 'Cancel',
-                        'method' => 'DELETE',
-                        'confirm' => 'Are you sure you want to cancel this staging?',
-                    ],
-                ];
-
-                return view('components.action-list', ['actions' => $actions]);
-            })
-            ->addColumn('status_badge', function ($data) {
-                return view('components.status-badge', ['status' => $data->status])->render();
-            })
-            ->addColumn('monitor', function ($data) {
-                if ($data->staging_monitor) {
-                    return $data->staging_monitor;
-                }
-            })
-            ->filter(function ($query) use ($request) {
-                $this->dataFilter($query, $request);
-            }, true)
-            ->addIndexColumn()
-            ->rawColumns(['location', 'action', 'status_badge', 'serial_action', 'deployment_state'])
-            ->make(true);
+        // Kembalikan JSON ke DataTables
+        return response()->json([
+            'draw'            => intval($draw),
+            'recordsTotal'    => $count,
+            'recordsFiltered' => $count,
+            'data'            => $data,
+        ]);
     }
 
-    private function getStagingQuery()
+    protected function buildOqlWhere(Request $request): string
     {
-        return Staging::select(
-            'stagings.id',
-            'stagings.unit_serial',
-            'stagings.staging_monitor',
-            'stagings.termination_id',
-            'terminations.id as termination_id',
-            'stagings.company_id',
-            'stagings.operational_unit_id',
-            'stagings.operational_unit_address',
-            'stagings.company_address',
-            'stagings.staging_number',
-            'stagings.sla',
-            'stagings.holder_name',
-            'stagings.status',
-            'stagings.service_code',
-            'stagings.request_category',
-            'stagings.is_deployed',
-            'stagings.staging_start',
-            'stagings.staging_finish',
-            'stagings.created_at',
-            'stagings.updated_at',
-            'units.serial',
-            'units.brand',
-            'units.model',
-            'units.category as unit_category',
-            'services.label as service_label',
-            'services.code',
-        )
-            ->leftJoin('units', 'stagings.unit_serial', '=', 'units.serial')
-            ->leftJoin('services', 'stagings.service_code', '=', 'services.code')
-            ->leftJoin('terminations', 'stagings.termination_id', '=', 'terminations.id');
+        $filterFields = [
+            'ref' => 'ref',
+            'reffcustomer' => 'reffcustomer',
+            'caller_id_friendlyname' => 'caller_id_friendlyname',
+            'team_id_friendlyname' => 'team_id_friendlyname',
+            'org_id_friendlyname' => 'org_id_friendlyname',
+            'agent_id_friendlyname' => 'agent_id_friendlyname',
+            'daascontact_id_friendlyname' => 'daascontact_id_friendlyname',
+            'location_id_friendlyname' => 'location_id_friendlyname',
+            'daascustomer_id_friendlyname' => 'daascustomer_id_friendlyname',
+            'status' => 'status',
+            'request_type' => 'request_type',
+            'start_date' => 'start_date',
+            'end_date' => 'end_date',
+            'last_update' => 'last_update',
+            'close_date' => 'close_date',
+            'description' => 'description',
+            'title' => 'title',
+            'urgency' => 'urgency',
+            'impact' => 'impact',
+            'priority' => 'priority',
+            'service_id_friendlyname' => 'service_id_friendlyname',
+            'servicesubcategory_id_friendlyname' => 'servicesubcategory_id_friendlyname',
+            'impacted_ci_friendlyname' => 'impacted_ci_friendlyname',
+        ];
+
+        $conditions = [];
+
+        foreach ($filterFields as $input => $field) {
+            $value = $request->input($input);
+            if ($field === 'servicesubcategory_id_friendlyname') {
+                // Special case for servicesubcategory_id_friendlyname
+                $value =  "Fulfillment Staging";
+            }
+            if (!empty($value)) {
+                // Escape single quotes to prevent breaking OQL
+                $escaped = str_replace("'", "\\'", $value);
+                $conditions[] = "$field LIKE '%{$escaped}%'";
+            }
+        }
+
+        Log::info("OQL conditions: " . json_encode($conditions, JSON_PRETTY_PRINT));
+
+        return count($conditions) ? ' WHERE ' . implode(' AND ', $conditions) : '';
     }
 
-    private function dataFilter($query, Request $request)
-    {
-        if ($request->filled('serial')) {
-            $query->where('stagings.unit_serial', 'like', '%' . $request->input('serial') . '%');
-        }
+    // public function getData(Request $request)
+    // {
+    //     $stagings = $this->getStagingQuery();
 
-        if ($request->filled('brand')) {
-            $query->whereHas('units', function ($q) use ($request) {
-                $q->where('brand', $request->input('brand'));
-            });
-        }
+    //     return DataTables::of($stagings)
+    //         ->addColumn('company_code', function ($data) {
+    //             $companyCode = $data->company->company_code;
 
-        if ($request->filled('status')) {
-            $query->where('stagings.status', $request->input('status'));
-        }
+    //             return $companyCode ?? '';
+    //         })
+    //         ->addColumn('company_group', function ($data) {
+    //             $companyGroup = $data->company->company_group;
 
-        if ($request->filled('is_deployed')) {
-            $query->where('stagings.is_deployed', $request->input('is_deployed'));
-        }
+    //             return $companyGroup ?? '';
+    //         })
+    //         ->addColumn('company_name', function ($data) {
+    //             $companyName = $data->company->company_name;
 
-        if ($request->filled('category')) {
-            $query->whereHas('units', function ($q) use ($request) {
-                $q->where('category', $request->input('category'));
-            });
-        }
+    //             return $companyName ?? '';
+    //         })
+    //         ->addColumn('operational_name', function ($data) {
+    //             $operationalUnitName = $data->operationalUnit->company_name;
 
-        if ($request->filled('service_code')) {
-            $query->whereHas('stagings.service_code', $request->input('service_code'));
-        }
+    //             return $operationalUnitName ?? '';
+    //         })
+    //         ->addColumn('sn_termination', function ($data) {
+    //             return  $data->terminated_serial ?? null;
+    //         })
+    //         ->addColumn('termination', function ($data) {
+    //             return  $data->termination ?? null;
+    //         })
+    //         ->addColumn('company_location', function ($data) {
+    //             $location = $data->companyAddress->location;
 
-        if ($request->filled('sla')) {
-            $query->whereHas(
-                'stagings.sla',
-                $request->input('sla')
-            );
-        }
+    //             return $location ?? '';
+    //         })
+    //         ->addColumn('operational_location', function ($data) {
+    //             $location = $data->operationalAddress->location;
 
-        $selectedDateColumn = $request->input('date_column');
+    //             return $location ?? '';
+    //         })
+    //         ->addColumn('deployment_state', function ($data) {
+    //             if ($data->is_deployed == 1) {
+    //                 return 'Deployed';
+    //             }
+    //         })
+    //         ->addColumn('serial_action', function ($data) {
+    //             $id = $data->id;
+    //             $label = $data->unit_serial;
 
-        if (in_array($selectedDateColumn, ['created_at', 'updated_at']) && $request->has('start_date') && $request->has('end_date')) {
-            $start_date = $request->input('start_date');
-            $end_date = $request->input('end_date');
-            $query->whereBetween("units.{$selectedDateColumn}", [$start_date, $end_date]);
-        }
+    //             return view('components.action', [
+    //                 'url' => route('staging.edit', $id),
+    //                 'label' => $label,
+    //                 'modal' => true,
+    //                 'modalName' => 'createModal',
+    //             ]);
+    //         })
+    //         ->addColumn('action', function ($data) {
+    //             $id = $data->id;
+    //             $actions = [
+    //                 'edit' => [
+    //                     'url' => route('staging.edit', $id),
+    //                     'label' => 'Update',
+    //                     'modal' => true,
+    //                     'modalName' => 'createModal',
+    //                 ],
+    //                 'destroy' => [
+    //                     'url' => route('staging.destroy', $id),
+    //                     'label' => 'Cancel',
+    //                     'method' => 'DELETE',
+    //                     'confirm' => 'Are you sure you want to cancel this staging?',
+    //                 ],
+    //             ];
 
-        if (in_array($selectedDateColumn, ['staging_start', 'staging_finish']) && $request->has('start_date') && $request->has('end_date')) {
-            $start_date = $request->input('start_date');
-            $end_date = $request->input('end_date');
-            $query->whereBetween("stagings.{$selectedDateColumn}", [$start_date, $end_date]);
-        }
+    //             return view('components.action-list', ['actions' => $actions]);
+    //         })
+    //         ->addColumn('status_badge', function ($data) {
+    //             return view('components.status-badge', ['status' => $data->status])->render();
+    //         })
+    //         ->addColumn('monitor', function ($data) {
+    //             if ($data->staging_monitor) {
+    //                 return $data->staging_monitor;
+    //             }
+    //         })
+    //         ->filter(function ($query) use ($request) {
+    //             $this->dataFilter($query, $request);
+    //         }, true)
+    //         ->addIndexColumn()
+    //         ->rawColumns(['location', 'action', 'status_badge', 'serial_action', 'deployment_state'])
+    //         ->make(true);
+    // }
 
-        return $query;
-    }
+    // private function getStagingQuery()
+    // {
+    //     return Staging::select(
+    //         'stagings.id',
+    //         'stagings.unit_serial',
+    //         'stagings.staging_monitor',
+    //         'stagings.termination_id',
+    //         'terminations.id as termination_id',
+    //         'stagings.company_id',
+    //         'stagings.operational_unit_id',
+    //         'stagings.operational_unit_address',
+    //         'stagings.company_address',
+    //         'stagings.staging_number',
+    //         'stagings.sla',
+    //         'stagings.holder_name',
+    //         'stagings.status',
+    //         'stagings.service_code',
+    //         'stagings.request_category',
+    //         'stagings.is_deployed',
+    //         'stagings.staging_start',
+    //         'stagings.staging_finish',
+    //         'stagings.created_at',
+    //         'stagings.updated_at',
+    //         'units.serial',
+    //         'units.brand',
+    //         'units.model',
+    //         'units.category as unit_category',
+    //         'services.label as service_label',
+    //         'services.code',
+    //     )
+    //         ->leftJoin('units', 'stagings.unit_serial', '=', 'units.serial')
+    //         ->leftJoin('services', 'stagings.service_code', '=', 'services.code')
+    //         ->leftJoin('terminations', 'stagings.termination_id', '=', 'terminations.id');
+    // }
+
+    // private function dataFilter($query, Request $request)
+    // {
+    //     if ($request->filled('serial')) {
+    //         $query->where('stagings.unit_serial', 'like', '%' . $request->input('serial') . '%');
+    //     }
+
+    //     if ($request->filled('brand')) {
+    //         $query->whereHas('units', function ($q) use ($request) {
+    //             $q->where('brand', $request->input('brand'));
+    //         });
+    //     }
+
+    //     if ($request->filled('status')) {
+    //         $query->where('stagings.status', $request->input('status'));
+    //     }
+
+    //     if ($request->filled('is_deployed')) {
+    //         $query->where('stagings.is_deployed', $request->input('is_deployed'));
+    //     }
+
+    //     if ($request->filled('category')) {
+    //         $query->whereHas('units', function ($q) use ($request) {
+    //             $q->where('category', $request->input('category'));
+    //         });
+    //     }
+
+    //     if ($request->filled('service_code')) {
+    //         $query->whereHas('stagings.service_code', $request->input('service_code'));
+    //     }
+
+    //     if ($request->filled('sla')) {
+    //         $query->whereHas(
+    //             'stagings.sla',
+    //             $request->input('sla')
+    //         );
+    //     }
+
+    //     $selectedDateColumn = $request->input('date_column');
+
+    //     if (in_array($selectedDateColumn, ['created_at', 'updated_at']) && $request->has('start_date') && $request->has('end_date')) {
+    //         $start_date = $request->input('start_date');
+    //         $end_date = $request->input('end_date');
+    //         $query->whereBetween("units.{$selectedDateColumn}", [$start_date, $end_date]);
+    //     }
+
+    //     if (in_array($selectedDateColumn, ['staging_start', 'staging_finish']) && $request->has('start_date') && $request->has('end_date')) {
+    //         $start_date = $request->input('start_date');
+    //         $end_date = $request->input('end_date');
+    //         $query->whereBetween("stagings.{$selectedDateColumn}", [$start_date, $end_date]);
+    //     }
+
+    //     return $query;
+    // }
 
     public function export()
     {
@@ -284,34 +411,34 @@ class StagingController extends Controller
     /**
      * Display the specified resource.
      */
-    public function loadStagingData(Staging $staging)
-    {
-        $statusOptions = StagingStatus::options();
-        $services = Service::all();
-        $companies = Company::where('company_category', CompanyCategory::CUSTOMER)->whereHas('addresses')->get();
-        $categories = RequestCategory::options();
+    // public function loadStagingData(Staging $staging)
+    // {
+    //     $statusOptions = StagingStatus::options();
+    //     $services = Service::all();
+    //     $companies = Company::where('company_category', CompanyCategory::CUSTOMER)->whereHas('addresses')->get();
+    //     $categories = RequestCategory::options();
 
-        $staging->load('unit', 'service', 'company');
+    //     $staging->load('unit', 'service', 'company');
 
-        $address = null;
-        if ($staging->company) {
-            $address = Address::findOrFail($staging->company_address);
-        }
+    //     $address = null;
+    //     if ($staging->company) {
+    //         $address = Address::findOrFail($staging->company_address);
+    //     }
 
-        return compact('staging', 'services', 'statusOptions', 'companies', 'address', 'categories');
-    }
+    //     return compact('staging', 'services', 'statusOptions', 'companies', 'address', 'categories');
+    // }
 
-    public function show(Staging $staging)
-    {
-        $data = $this->loadStagingData($staging);
-        return view('stagings.show', $data);
-    }
+    // public function show(Staging $staging)
+    // {
+    //     $data = $this->loadStagingData($staging);
+    //     return view('stagings.show', $data);
+    // }
 
-    public function edit(Staging $staging)
-    {
-        $data = $this->loadStagingData($staging);
-        return view('stagings.edit', $data);
-    }
+    // public function edit(Staging $staging)
+    // {
+    //     $data = $this->loadStagingData($staging);
+    //     return view('stagings.edit', $data);
+    // }
 
     /**
      * Remove the specified resource from storage.
